@@ -9,15 +9,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04-arm
     steps:
-      # ═══════════════════════════════════════════════════════════════
-      # 1. Чекаутим СВОЙ репозиторий (patches/, scripts/, Makefile)
-      # ═══════════════════════════════════════════════════════════════
       - name: Checkout this repository
         uses: actions/checkout@v4
 
-      # ═══════════════════════════════════════════════════════════════
-      # 2. Чекаутим внешние репозитории
-      # ═══════════════════════════════════════════════════════════════
       - name: Checkout OpenCode
         uses: actions/checkout@v4
         with:
@@ -36,70 +30,37 @@ jobs:
         with:
           bun-version: latest
 
-      # ═══════════════════════════════════════════════════════════════
-      # 3. Отладка (можно убрать после первого успешного запуска)
-      # ═══════════════════════════════════════════════════════════════
-      - name: Debug workspace layout
-        run: |
-          echo "=== Workspace root ==="
-          pwd
-          ls -la
-          echo "=== patches/ ==="
-          ls -la patches/ || true
-          echo "=== scripts/ ==="
-          ls -la scripts/ || true
-          echo "=== opencode/ ==="
-          ls -la opencode/ || true
-
-      # ═══════════════════════════════════════════════════════════════
-      # 4. Патчим opencode
-      # ═══════════════════════════════════════════════════════════════
       - name: Apply patches
         run: |
-          cd opencode
-          git apply ../patches/0001-android-support.patch || true
-          bash ../scripts/termux-patch.sh ./opencode
+          # termux-patch.sh patches OS list, telemetry, build.ts
+          # No need for 0001-android-support.patch — handled by sed in script
+          bash scripts/termux-patch.sh ./opencode
 
-      # ═══════════════════════════════════════════════════════════════
-      # 5. Собираем OpenCode
-      # ═══════════════════════════════════════════════════════════════
       - name: Build OpenCode
         run: |
           cd opencode/packages/opencode
           bun install
           bun run script/build.ts --single --skip-install --skip-embed-web-ui
 
-      # ═══════════════════════════════════════════════════════════════
-      # 6. Проверяем маркер Bun (опционально, но полезно)
-      # ═══════════════════════════════════════════════════════════════
       - name: Verify Bun marker
         run: |
           BINARY="opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode"
           if ! strings "$BINARY" | grep -q "---- Bun! ----"; then
-            echo "WARNING: Bun marker not found — bun-termux-loader may fail"
+            echo "WARNING: Bun marker not found"
           else
             echo "Bun marker OK"
           fi
 
-      # ═══════════════════════════════════════════════════════════════
-      # 7. Враппим бинарник
-      # ═══════════════════════════════════════════════════════════════
       - name: Wrap binary
         run: |
           python3 bun-termux-loader/build.py \
             --input opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode \
             --output opencode-termux
 
-      # ═══════════════════════════════════════════════════════════════
-      # 8. Собираем .deb
-      # ═══════════════════════════════════════════════════════════════
       - name: Build .deb
         run: |
           bash scripts/package-deb.sh --binary opencode-termux --output opencode-termux.deb
 
-      # ═══════════════════════════════════════════════════════════════
-      # 9. Загружаем артефакт
-      # ═══════════════════════════════════════════════════════════════
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

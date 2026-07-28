@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq python3 dpkg-dev fakeroot
+          sudo apt-get install -y -qq python3 dpkg-dev fakeroot file
 
       - name: Clone upstream OpenCode
         run: |
@@ -55,15 +55,22 @@ jobs:
         run: |
           set -euo pipefail
           cd opencode-source/packages/opencode
-          bun run build --single --skip-install 2>&1 | tail -20
-          BIN="$(find ../../dist/opencode-linux-arm64/bin -name 'opencode' -type f | head -1)"
-          if [[ -z "$BIN" ]]; then
-            echo "Binary not found; dist contents:" >&2
-            find ../../dist -type f -name 'opencode' | head -20 >&2
+          bun run script/build.ts --single --skip-install --skip-embed-web-ui 2>&1 | tail -25
+
+          # ПРЯМОЙ ПУТЬ — без find, без ../../dist
+          BIN="dist/opencode-linux-arm64/bin/opencode"
+          if [[ ! -f "$BIN" ]]; then
+            echo "Binary not found at $BIN" >&2
+            echo "Dist contents:" >&2
+            ls -la dist/ 2>/dev/null || true
+            echo "Searching for any 'opencode' binary:" >&2
+            find . -name 'opencode' -type f 2>/dev/null | head -20 >&2
             exit 1
           fi
+
           cp "$BIN" "$GITHUB_WORKSPACE/opencode-linux-arm64"
           file "$GITHUB_WORKSPACE/opencode-linux-arm64"
+          ls -lh "$GITHUB_WORKSPACE/opencode-linux-arm64"
 
       - name: Clone bun-termux-loader
         run: |
@@ -73,7 +80,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p prebuilt
-          # Try to download from Hope2333/opencode-termux prebuilt/
           for file in wrapper bunfs_shim.so; do
             URL="https://raw.githubusercontent.com/Hope2333/opencode-termux/pure-android/tools/prebuilt/$file"
             if curl -fsL "$URL" -o "prebuilt/$file" 2>/dev/null; then
@@ -82,19 +88,16 @@ jobs:
               echo "WARNING: Could not download $file from Hope2333 repo"
             fi
           done
-          # If downloaded, copy to loader dir
           if [[ -f "prebuilt/wrapper" && -f "prebuilt/bunfs_shim.so" ]]; then
             cp prebuilt/wrapper bun-termux-loader/wrapper
             cp prebuilt/bunfs_shim.so bun-termux-loader/bunfs_shim.so
             chmod +x bun-termux-loader/wrapper
           else
-            echo "Pre-built wrapper/shim not available. Will try to build from source..."
-            # Build wrapper (needs clang, but ubuntu-24.04-arm has it)
+            echo "Pre-built wrapper/shim not available. Building from source..."
             cd bun-termux-loader
             if [[ -f "Makefile" ]]; then
-              make wrapper || echo "Wrapper build failed, will try fallback"
+              make wrapper || echo "Wrapper build failed"
             fi
-            # For shim, we need glibc toolchain — ubuntu has it
             if [[ -f "bunfs_shim.c" ]]; then
               gcc -shared -fPIC -O2 -o bunfs_shim.so bunfs_shim.c -ldl || echo "Shim build failed"
             fi
@@ -111,21 +114,23 @@ jobs:
             exit 1
           fi
 
-          # Ensure wrapper and shim exist
           WRAPPER="$LOADER/wrapper"
           SHIM="$LOADER/bunfs_shim.so"
 
           if [[ ! -f "$WRAPPER" ]]; then
-            echo "Wrapper not found, searching..." >&2
             WRAPPER="$(find "$LOADER" -name 'wrapper' -type f | head -1)"
           fi
           if [[ ! -f "$SHIM" ]]; then
-            echo "Shim not found, searching..." >&2
             SHIM="$(find "$LOADER" -name '*.so' -type f | head -1)"
           fi
 
-          echo "Using wrapper: $WRAPPER"
-          echo "Using shim: $SHIM"
+          echo "Using wrapper: ${WRAPPER:-NOT FOUND}"
+          echo "Using shim: ${SHIM:-NOT FOUND}"
+
+          if [[ ! -f "$WRAPPER" || ! -f "$SHIM" ]]; then
+            echo "CRITICAL: wrapper or shim missing" >&2
+            exit 1
+          fi
 
           python3 "$LOADER/build.py" "$BIN"             --wrapper "$WRAPPER"             --shim "$SHIM"             2>&1 | tail -10
 
@@ -144,8 +149,7 @@ jobs:
         run: |
           VER="${{ github.event.inputs.opencode_version }}"
           if [[ -z "$VER" ]]; then
-            # Try to extract from binary
-            VER="$(chmod +x opencode-termux-aarch64 && ./opencode-termux-aarch64 --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '0.0.0')"
+            VER="$(node -e "console.log(require('./opencode-source/packages/opencode/package.json').version)")"
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "OpenCode version: $VER"

@@ -36,8 +36,9 @@ jobs:
 
       - name: Build OpenCode
         run: |
-          cd opencode/packages/opencode
+          cd opencode
           bun install
+          cd packages/opencode
           bun run script/build.ts --single --skip-install --skip-embed-web-ui
 
       - name: Verify Bun marker
@@ -58,7 +59,7 @@ jobs:
 
       - name: Build .deb
         run: |
-          bash scripts/package-deb.sh --binary opencode-termux --output opencode-termux.deb
+          bash scripts/package-deb.sh opencode-termux opencode-termux.deb
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -1,0 +1,177 @@
+name: Build OpenCode for Termux (Fresh)
+
+on:
+  workflow_dispatch:
+    inputs:
+      opencode_ref:
+        description: "Upstream branch/tag (default: dev)"
+        required: false
+        default: "dev"
+      opencode_version:
+        description: "Version override (e.g. 1.18.7)"
+        required: false
+        default: ""
+
+env:
+  BUN_TERMUX_LOADER_REPO: "https://github.com/kaan-escober/bun-termux-loader"
+  PREBUILT_REPO: "https://github.com/Hope2333/opencode-termux"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3 dpkg-dev fakeroot
+
+      - name: Clone upstream OpenCode
+        run: |
+          set -euo pipefail
+          REF="${{ github.event.inputs.opencode_ref || 'dev' }}"
+          git clone --depth 1 --branch "$REF"             https://github.com/anomalyco/opencode.git opencode-source
+
+      - name: Apply Android support patch
+        run: |
+          cd opencode-source
+          if [[ -f "$GITHUB_WORKSPACE/patches/0001-android-support.patch" ]]; then
+            git apply "$GITHUB_WORKSPACE/patches/0001-android-support.patch" || echo "Patch may already be applied"
+          fi
+
+      - name: Install OpenCode dependencies
+        run: |
+          cd opencode-source
+          bun install 2>&1 | tail -5
+
+      - name: Build opencode-linux-arm64
+        run: |
+          set -euo pipefail
+          cd opencode-source/packages/opencode
+          bun run build --single --skip-install 2>&1 | tail -20
+          BIN="$(find ../../dist/opencode-linux-arm64/bin -name 'opencode' -type f | head -1)"
+          if [[ -z "$BIN" ]]; then
+            echo "Binary not found; dist contents:" >&2
+            find ../../dist -type f -name 'opencode' | head -20 >&2
+            exit 1
+          fi
+          cp "$BIN" "$GITHUB_WORKSPACE/opencode-linux-arm64"
+          file "$GITHUB_WORKSPACE/opencode-linux-arm64"
+
+      - name: Clone bun-termux-loader
+        run: |
+          git clone --depth 1 "$BUN_TERMUX_LOADER_REPO" bun-termux-loader
+
+      - name: Fetch pre-built wrapper + shim
+        run: |
+          set -euo pipefail
+          mkdir -p prebuilt
+          # Try to download from Hope2333/opencode-termux prebuilt/
+          for file in wrapper bunfs_shim.so; do
+            URL="https://raw.githubusercontent.com/Hope2333/opencode-termux/pure-android/tools/prebuilt/$file"
+            if curl -fsL "$URL" -o "prebuilt/$file" 2>/dev/null; then
+              echo "Downloaded $file"
+            else
+              echo "WARNING: Could not download $file from Hope2333 repo"
+            fi
+          done
+          # If downloaded, copy to loader dir
+          if [[ -f "prebuilt/wrapper" && -f "prebuilt/bunfs_shim.so" ]]; then
+            cp prebuilt/wrapper bun-termux-loader/wrapper
+            cp prebuilt/bunfs_shim.so bun-termux-loader/bunfs_shim.so
+            chmod +x bun-termux-loader/wrapper
+          else
+            echo "Pre-built wrapper/shim not available. Will try to build from source..."
+            # Build wrapper (needs clang, but ubuntu-24.04-arm has it)
+            cd bun-termux-loader
+            if [[ -f "Makefile" ]]; then
+              make wrapper || echo "Wrapper build failed, will try fallback"
+            fi
+            # For shim, we need glibc toolchain — ubuntu has it
+            if [[ -f "bunfs_shim.c" ]]; then
+              gcc -shared -fPIC -O2 -o bunfs_shim.so bunfs_shim.c -ldl || echo "Shim build failed"
+            fi
+          fi
+
+      - name: Wrap binary for Termux
+        run: |
+          set -euo pipefail
+          LOADER="$GITHUB_WORKSPACE/bun-termux-loader"
+          BIN="$GITHUB_WORKSPACE/opencode-linux-arm64"
+
+          if [[ ! -f "$LOADER/build.py" ]]; then
+            echo "bun-termux-loader build.py not found" >&2
+            exit 1
+          fi
+
+          # Ensure wrapper and shim exist
+          WRAPPER="$LOADER/wrapper"
+          SHIM="$LOADER/bunfs_shim.so"
+
+          if [[ ! -f "$WRAPPER" ]]; then
+            echo "Wrapper not found, searching..." >&2
+            WRAPPER="$(find "$LOADER" -name 'wrapper' -type f | head -1)"
+          fi
+          if [[ ! -f "$SHIM" ]]; then
+            echo "Shim not found, searching..." >&2
+            SHIM="$(find "$LOADER" -name '*.so' -type f | head -1)"
+          fi
+
+          echo "Using wrapper: $WRAPPER"
+          echo "Using shim: $SHIM"
+
+          python3 "$LOADER/build.py" "$BIN"             --wrapper "$WRAPPER"             --shim "$SHIM"             2>&1 | tail -10
+
+          WRAPPED="${BIN}-termux"
+          if [[ ! -f "$WRAPPED" ]]; then
+            echo "Wrapper did not produce $WRAPPED" >&2
+            exit 1
+          fi
+
+          cp "$WRAPPED" "$GITHUB_WORKSPACE/opencode-termux-aarch64"
+          file "$GITHUB_WORKSPACE/opencode-termux-aarch64"
+          ls -lh "$GITHUB_WORKSPACE/opencode-termux-aarch64"
+
+      - name: Determine version
+        id: version
+        run: |
+          VER="${{ github.event.inputs.opencode_version }}"
+          if [[ -z "$VER" ]]; then
+            # Try to extract from binary
+            VER="$(chmod +x opencode-termux-aarch64 && ./opencode-termux-aarch64 --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '0.0.0')"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "OpenCode version: $VER"
+
+      - name: Build .deb package
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          bash "$GITHUB_WORKSPACE/scripts/package-deb.sh"             "$GITHUB_WORKSPACE/opencode-termux-aarch64"             "$VER"             "$GITHUB_WORKSPACE"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-termux-aarch64-${{ steps.version.outputs.version }}
+          path: |
+            opencode-termux-aarch64
+            *.deb
+          retention-days: 30
+
+      - name: Upload to release (if tagged)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            opencode-termux-aarch64
+            *.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          

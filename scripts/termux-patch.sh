@@ -483,83 +483,84 @@ class TermuxPicker implements Picker {
                 for (const sm of data.data.submatches) {
                   const key = `${data.data.path.text}:${data.data.line_number}`
                   if (seen.has(key)) continue
-                  seen.add(key)
-                  items.push({
-                    relativePath: relative(this.basePath, data.data.path.text),
-                    fileName: basename(data.data.path.text),
-                    lineNumber: data.data.line_number,
-                    byteOffset: sm.start,
-                    lineContent: data.data.lines.text,
-                    matchRanges: [[sm.start, sm.end]],
-                  })
-                }
-              }
-            } catch {}
-          }
-          resolve({
-            ok: true,
-            value: {
-              items: items.slice(0, pageSize),
-              totalMatched: items.length,
-              totalFilesSearched: new Set(items.map(i => i.relativePath)).size,
-              totalFiles: this.files.length,
-              filteredFileCount: 0,
-              nextCursor: null,
-            }
-          })
-        })
-      }) as any
-    } catch {
-      // Fallback: simple line-by-line search (very slow on big projects)
-      return { ok: false, error: "ripgrep not available. Install: pkg install ripgrep" }
-    }
-  }
+#!/bin/bash
+set -euo pipefail
 
-  trackQuery(query: string, file: string): Result<boolean> {
-    return { ok: true, value: true }
-  }
+OPENCODE_DIR="${1:-./opencode}"
+CORE_DIR="$OPENCODE_DIR/packages/core"
+PKG_DIR="$OPENCODE_DIR/packages/opencode"
 
-  getHistoricalQuery(offset: number): Result<string | null> {
-    return { ok: true, value: null }
+echo "[*] Patching build.ts — disable code-splitting for single build..."
+sed -i 's/splitting: true,/splitting: singleFlag ? false : true,/' "$PKG_DIR/script/build.ts"
+
+echo "[*] Patching telemetry: otlp.ts..."
+cat > "$CORE_DIR/src/observability/otlp.ts" << 'EOF'
+import { Layer } from "effect"
+import { Flag } from "../flag/flag"
+import { InstallationChannel, InstallationVersion } from "../installation/version"
+import { runID } from "./shared"
+
+function resourceAttributes() {
+  const value = process.env.OTEL_RESOURCE_ATTRIBUTES
+  if (!value) return {}
+  try {
+    return Object.fromEntries(
+      value.split(",").map((entry) => {
+        const index = entry.indexOf("=")
+        if (index < 1) throw new Error("Invalid OTEL_RESOURCE_ATTRIBUTES entry")
+        return [decodeURIComponent(entry.slice(0, index)), decodeURIComponent(entry.slice(index + 1))]
+      }),
+    )
+  } catch {
+    return {}
   }
 }
 
-export function available() {
-  return true
+export function resource(): { serviceName: string; serviceVersion: string; attributes: Record<string, string> } {
+  return {
+    serviceName: "opencode",
+    serviceVersion: InstallationVersion,
+    attributes: {
+      ...resourceAttributes(),
+      "deployment.environment.name": InstallationChannel,
+      "opencode.client": Flag.OPENCODE_CLIENT,
+      "opencode.run": runID,
+      "service.instance.id": runID,
+    },
+  }
 }
 
-export function create(opts: Init): Result<Picker> {
-  return { ok: true, value: new TermuxPicker(opts) }
+export function loggers() { return [] }
+export async function tracingLayer() { return Layer.empty }
+export * as Otlp from "./otlp"
+EOF
+
+echo "[*] Patching telemetry: share-next.ts..."
+sed -i 's/const disabled = .*/const disabled = true/' "$PKG_DIR/src/share/share-next.ts"
+
+echo "[*] Patching telemetry: agent.ts..."
+sed -i 's/const tracer = cfg.experimental?.openTelemetry/const tracer = undefined/' "$PKG_DIR/src/agent/agent.ts"
+sed -i 's/isEnabled: cfg.experimental?.openTelemetry,/isEnabled: false,/' "$PKG_DIR/src/agent/agent.ts"
+
+echo "[*] Patching telemetry: llm.ts..."
+sed -i 's/const tracer = cfg.experimental?.openTelemetry/const tracer = undefined/' "$PKG_DIR/src/session/llm.ts"
+sed -i 's/isEnabled: cfg.experimental?.openTelemetry,/isEnabled: false,/' "$PKG_DIR/src/session/llm.ts"
+
+echo "[*] Patching telemetry: trace.ts..."
+cat > "$PKG_DIR/src/cli/cmd/run/trace.ts" << 'EOF'
+import { Global } from "@opencode-ai/core/global"
+
+export type Trace = { write(type: string, data?: unknown): void }
+let state: Trace | false | undefined
+
+export function trace(): Trace | undefined {
+  if (state !== undefined) return state || undefined
+  state = false
+  return undefined
 }
+EOF
 
-export * as Fff from "./fff.termux"
-FFFEOF
+echo "[*] Patching opencode package.json OS list..."
+sed -i 's/"os": \["darwin", "linux", "win32"\]/"os": ["darwin", "linux", "win32", "android"]/' "$PKG_DIR/package.json"
 
-echo ""
-echo "[termux-patch] All patches applied!"
-echo ""
-echo "════════════════════════════════════════════════════════════════════"
-echo "  NEXT STEPS IN TERMUX"
-echo "════════════════════════════════════════════════════════════════════"
-echo ""
-echo "  1. Install dependencies:"
-echo "     pkg install bun python rust build-essential git ripgrep zig"
-echo ""
-echo "  2. Install node_modules:"
-echo "     bun install"
-echo ""
-echo "  3. Build @opentui/core native Zig library (if not prebuilt):"
-echo "     cd node_modules/@opentui/core"
-echo "     bun run build   # or: zig build -Dtarget=aarch64-linux-android"
-echo "     cd ../.."
-echo ""
-echo "  4. (OPTIONAL) Build native FFF .so for max performance:"
-echo "     git clone https://github.com/dmtrKovalenko/fff ~/fff"
-echo "     cd ~/fff"
-echo "     cargo build --release -p fff-c"
-echo "     cp target/release/libfff_c.so node_modules/@ff-labs/fff-bun/"
-echo ""
-echo "  5. Run opencode:"
-echo "     bun run packages/opencode/src/index.ts"
-echo ""
-echo "════════════════════════════════════════════════════════════════════"
+echo "[*] Done."

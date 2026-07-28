@@ -1,7 +1,7 @@
 --- a/packages/opencode/package.json
 +++ b/packages/opencode/package.json
-@@ -1,6 +1,6 @@
- {
+@@ -3,7 +3,7 @@
+   "version": "1.18.8",
    "name": "opencode",
 -  "os": ["darwin", "linux", "win32"],
 +  "os": ["darwin", "linux", "win32", "android"],

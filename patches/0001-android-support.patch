@@ -1,0 +1,11 @@
+--- a/packages/opencode/package.json
++++ b/packages/opencode/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "opencode",
+-  "os": ["darwin", "linux", "win32"],
++  "os": ["darwin", "linux", "win32", "android"],
+   "cpu": ["arm64", "x64"],
+   "bin": {
+     "opencode": "./bin/opencode"
+     

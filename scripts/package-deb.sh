@@ -1,9 +1,19 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 
-BINARY="${1:-./opencode-termux}"
-OUTPUT="${2:-./opencode-termux.deb}"
-VERSION="${3:-1.18.8}"
+BINARY="./opencode-termux"
+OUTPUT="./opencode-termux.deb"
+VERSION="1.18.8"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --binary) BINARY="$2"; shift 2 ;;
+    --output) OUTPUT="$2"; shift 2 ;;
+    --version) VERSION="$2"; shift 2 ;;
+    *) BINARY="$1"; OUTPUT="${2:-$OUTPUT}"; break ;;
+  esac
+done
+
 PREFIX=/data/data/com.termux/files/usr
 
 mkdir -p .debpkg/DEBIAN

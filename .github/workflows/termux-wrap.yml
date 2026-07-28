@@ -19,10 +19,10 @@ jobs:
           ref: dev
           path: opencode
 
-      - name: Checkout bun-termux-loader
+      - name: Checkout bun-termux-loader (Hope2333 fork with prebuilt wrapper)
         uses: actions/checkout@v4
         with:
-          repository: kaan-escober/bun-termux-loader
+          repository: Hope2333/bun-termux-loader
           path: bun-termux-loader
 
       - name: Setup Bun
@@ -32,8 +32,6 @@ jobs:
 
       - name: Apply patches
         run: |
-          # termux-patch.sh patches OS list, telemetry, build.ts
-          # No need for 0001-android-support.patch — handled by sed in script
           bash scripts/termux-patch.sh ./opencode
 
       - name: Build OpenCode
@@ -45,7 +43,7 @@ jobs:
       - name: Verify Bun marker
         run: |
           BINARY="opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode"
-          if ! strings "$BINARY" | grep -q "---- Bun! ----"; then
+          if ! strings "$BINARY" | grep -F -- '---- Bun! ----' >/dev/null; then
             echo "WARNING: Bun marker not found"
           else
             echo "Bun marker OK"
@@ -53,9 +51,10 @@ jobs:
 
       - name: Wrap binary
         run: |
-          python3 bun-termux-loader/build.py \
-            --input opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode \
-            --output opencode-termux
+          cd bun-termux-loader
+          python3 build.py \
+            ../opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode \
+            ../opencode-termux
 
       - name: Build .deb
         run: |

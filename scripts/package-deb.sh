@@ -3,7 +3,7 @@ set -euo pipefail
 
 BINARY="./opencode-termux"
 OUTPUT="./opencode-termux.deb"
-VERSION="1.18.8"
+VERSION="1.18.9"
 
 while [[ $# -gt 0 ]]; do
   case $1 in

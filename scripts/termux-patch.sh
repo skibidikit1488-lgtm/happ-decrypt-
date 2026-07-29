@@ -5,19 +5,25 @@ OPENCODE_DIR="${1:-./opencode}"
 CORE_DIR="$OPENCODE_DIR/packages/core"
 PKG_DIR="$OPENCODE_DIR/packages/opencode"
 
-echo "[termux-patch] Patching for Termux wrapper build..."
+echo "[termux-patch] Patching OpenCode for Termux wrapper build..."
 
-# 1. Disable code-splitting for single build
+# ═══════════════════════════════════════════════════════════════════
+# 1. Disable code-splitting for single build (self-contained binary)
+# ═══════════════════════════════════════════════════════════════════
 echo "[*] Patching build.ts — disable splitting for single build..."
 sed -i 's/splitting: true,/splitting: singleFlag ? false : true,/' "$PKG_DIR/script/build.ts"
 
-# 2. Patch @opentui/core parser.worker loading (graceful fallback, ignore if fails)
+# ═══════════════════════════════════════════════════════════════════
+# 2. Patch @opentui/core parser.worker loading (graceful fallback)
+# ═══════════════════════════════════════════════════════════════════
 echo "[*] Patching build.ts for @opentui/core..."
 sed -i \
   's/const treeSitterWorker = await Bun\.file(fileURLToPath(import\.meta\.resolve('\''@opentui\/core\/parser\.worker'\'')))\.text()/let treeSitterWorker = '\'''\''; try { treeSitterWorker = await Bun.file(fileURLToPath(import.meta.resolve('\''@opentui\/core\/parser.worker'\''))).text(); } catch(e) { console.warn('\''[termux] parser.worker unavailable:'\'', e.message); treeSitterWorker = '\''\/* termux: parser worker unavailable *\/'\''; }/' \
   "$PKG_DIR/script/build.ts" || true
 
+# ═══════════════════════════════════════════════════════════════════
 # 3. Remove glibc prebuild deps (not needed with wrapper)
+# ═══════════════════════════════════════════════════════════════════
 echo "[*] Removing glibc prebuild devDependencies..."
 node -e "
 const fs = require('fs');
@@ -53,7 +59,9 @@ for (const p of pkgs) {
 }
 "
 
+# ═══════════════════════════════════════════════════════════════════
 # 4. Binary-level telemetry disable
+# ═══════════════════════════════════════════════════════════════════
 echo "[*] Patching telemetry: otlp.ts..."
 cat > "$CORE_DIR/src/observability/otlp.ts" << 'OTLP_EOF'
 import { Layer } from "effect"
@@ -121,8 +129,5 @@ export function trace(): Trace | undefined {
 }
 TRACE_EOF
 
-# 5. Add android to OS list
-echo "[*] Patching opencode package.json OS list..."
-sed -i 's/"os": \["darwin", "linux", "win32"\]/"os": ["darwin", "linux", "win32", "android"]/' "$PKG_DIR/package.json"
 
 echo "[*] Done."

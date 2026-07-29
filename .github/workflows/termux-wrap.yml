@@ -12,14 +12,14 @@ jobs:
       - name: Checkout this repository
         uses: actions/checkout@v4
 
-      - name: Checkout OpenCode
+      - name: Checkout OpenCode v1.18.9
         uses: actions/checkout@v4
         with:
           repository: anomalyco/opencode
-          ref: dev
+          ref: v1.18.9
           path: opencode
 
-      - name: Checkout bun-termux-loader (Hope2333 fork with prebuilt wrapper)
+      - name: Checkout bun-termux-loader (Hope2333 fork)
         uses: actions/checkout@v4
         with:
           repository: Hope2333/bun-termux-loader

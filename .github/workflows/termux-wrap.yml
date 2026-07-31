@@ -23,16 +23,19 @@ jobs:
       - name: Determine version
         id: ver
         run: |
-          # Priority: workflow_dispatch input > repository_dispatch > fallback
           VER="${{ github.event.inputs.version }}"
           if [[ -z "$VER" ]]; then
             VER="${{ github.event.client_payload.version }}"
           fi
           if [[ -z "$VER" ]]; then
-            # Fallback: read from package-deb.sh
-            VER=$(grep -oP 'VERSION=\"\K[^\"]+' scripts/package-deb.sh)
+            # Fallback: read first VERSION= line from package-deb.sh
+            VER=$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' scripts/package-deb.sh)
           fi
-          echo "version=$VER" >> $GITHUB_OUTPUT
+          if [[ -z "$VER" ]]; then
+            echo "::error::Could not determine version"
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Building OpenCode v$VER"
 
       - name: Checkout OpenCode
@@ -53,7 +56,7 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Bump versions & apply patches
+      - name: Bump versions and apply patches
         run: |
           bash scripts/auto-patch.sh ./opencode ${{ steps.ver.outputs.version }}
 
@@ -76,16 +79,11 @@ jobs:
       - name: Wrap binary
         run: |
           cd bun-termux-loader
-          python3 build.py \
-            ../opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode \
-            ../opencode-termux
+          python3 build.py             ../opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode             ../opencode-termux
 
       - name: Build .deb
         run: |
-          bash scripts/package-deb.sh \
-            --binary opencode-termux \
-            --output opencode-termux.deb \
-            --version ${{ steps.ver.outputs.version }}
+          bash scripts/package-deb.sh             --binary opencode-termux             --output opencode-termux.deb             --version ${{ steps.ver.outputs.version }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -101,13 +99,13 @@ jobs:
           name: OpenCode Termux v${{ steps.ver.outputs.version }}
           body: |
             Auto-patched build of OpenCode v${{ steps.ver.outputs.version }} for Termux.
-            
+
             **Includes:**
             - Android OS support patch
             - Telemetry disabled
             - Single-file build (no code splitting)
             - Bun-termux-loader wrapped
-            
+
             **Install:**
             ```bash
             dpkg -i opencode-termux.deb

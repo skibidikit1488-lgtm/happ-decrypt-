@@ -1,9 +1,17 @@
 name: Build OpenCode for Termux (ARM64)
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenCode version to build'
+        required: true
+        default: '1.18.10'
+        type: string
   push:
     branches: [main, termux]
-  workflow_dispatch:
+  repository_dispatch:
+    types: [opencode-release]
 
 jobs:
   build:
@@ -12,14 +20,29 @@ jobs:
       - name: Checkout this repository
         uses: actions/checkout@v4
 
-      - name: Checkout OpenCode v1.18.9
+      - name: Determine version
+        id: ver
+        run: |
+          # Priority: workflow_dispatch input > repository_dispatch > fallback
+          VER="${{ github.event.inputs.version }}"
+          if [[ -z "$VER" ]]; then
+            VER="${{ github.event.client_payload.version }}"
+          fi
+          if [[ -z "$VER" ]]; then
+            # Fallback: read from package-deb.sh
+            VER=$(grep -oP 'VERSION=\"\K[^\"]+' scripts/package-deb.sh)
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "Building OpenCode v$VER"
+
+      - name: Checkout OpenCode
         uses: actions/checkout@v4
         with:
           repository: anomalyco/opencode
-          ref: v1.18.9
+          ref: v${{ steps.ver.outputs.version }}
           path: opencode
 
-      - name: Checkout bun-termux-loader (Hope2333 fork)
+      - name: Checkout bun-termux-loader
         uses: actions/checkout@v4
         with:
           repository: Hope2333/bun-termux-loader
@@ -30,9 +53,9 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Apply patches
+      - name: Bump versions & apply patches
         run: |
-          bash scripts/termux-patch.sh ./opencode
+          bash scripts/auto-patch.sh ./opencode ${{ steps.ver.outputs.version }}
 
       - name: Build OpenCode
         run: |
@@ -45,7 +68,7 @@ jobs:
         run: |
           BINARY="opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode"
           if ! strings "$BINARY" | grep -F -- '---- Bun! ----' >/dev/null; then
-            echo "WARNING: Bun marker not found"
+            echo "::warning::Bun marker not found"
           else
             echo "Bun marker OK"
           fi
@@ -59,10 +82,36 @@ jobs:
 
       - name: Build .deb
         run: |
-          bash scripts/package-deb.sh opencode-termux opencode-termux.deb
+          bash scripts/package-deb.sh \
+            --binary opencode-termux \
+            --output opencode-termux.deb \
+            --version ${{ steps.ver.outputs.version }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: opencode-termux-deb
+          name: opencode-termux-v${{ steps.ver.outputs.version }}
           path: opencode-termux.deb
+
+      - name: Create Release
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: OpenCode Termux v${{ steps.ver.outputs.version }}
+          body: |
+            Auto-patched build of OpenCode v${{ steps.ver.outputs.version }} for Termux.
+            
+            **Includes:**
+            - Android OS support patch
+            - Telemetry disabled
+            - Single-file build (no code splitting)
+            - Bun-termux-loader wrapped
+            
+            **Install:**
+            ```bash
+            dpkg -i opencode-termux.deb
+            ```
+          files: opencode-termux.deb
+          draft: false
+          prerelease: false

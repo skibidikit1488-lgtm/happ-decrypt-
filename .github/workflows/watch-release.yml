@@ -2,10 +2,9 @@ name: Watch OpenCode Releases
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # каждые 6 часов
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
-# Нужные права для создания issues и триггера workflow
 permissions:
   contents: read
   issues: write
@@ -26,27 +25,21 @@ jobs:
       - name: Check latest OpenCode release
         id: check_release
         run: |
-          # Получаем latest release через GitHub API
-          LATEST=$(curl -sL \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/anomalyco/opencode/releases/latest \
-            | jq -r '.tag_name' | sed 's/^v//')
-          
+          LATEST=$(curl -sL             -H "Accept: application/vnd.github+json"             https://api.github.com/repos/anomalyco/opencode/releases/latest             | jq -r '.tag_name' | sed 's/^v//')
+
           echo "latest=$LATEST"
-          
-          # Читаем текущую версию из нашего репо
-          CURRENT=$(grep -oP 'VERSION=\"\K[^\"]+' scripts/package-deb.sh || echo "0.0.0")
+
+          CURRENT=$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' scripts/package-deb.sh || echo "0.0.0")
           echo "current=$CURRENT"
-          
+
           if [[ "$LATEST" != "$CURRENT" ]]; then
-            echo "new_version=$LATEST" >> $GITHUB_OUTPUT
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "🚀 New version detected: $LATEST (was $CURRENT)"
+            echo "new_version=$LATEST" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "New version detected: $LATEST (was $CURRENT)"
           else
-            # Явно задаём пустую new_version, чтобы выход всегда был определён
-            echo "new_version=" >> $GITHUB_OUTPUT
-            echo "should_build=false" >> $GITHUB_OUTPUT
-            echo "😴 No new version. Current: $CURRENT"
+            echo "new_version=" >> "$GITHUB_OUTPUT"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "No new version. Current: $CURRENT"
           fi
 
   trigger:
@@ -54,13 +47,13 @@ jobs:
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Trigger build workflow
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: 'Build OpenCode for Termux'
-          ref: main
-          inputs: '{"version":"${{ needs.check.outputs.new_version }}"}'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run termux-wrap.yml             --repo "${{ github.repository }}"             --ref main             -f "version=${{ needs.check.outputs.new_version }}"
 
       - name: Create tracking issue
         uses: actions/github-script@v7
@@ -73,4 +66,4 @@ jobs:
               title: `🔔 Auto-build triggered for OpenCode v${ver}`,
               body: `New OpenCode release **v${ver}** detected.\n\n- Build workflow triggered automatically.\n- If patches fail, this issue will be updated.\n- Assignee: @${context.repo.owner}`,
               labels: ['auto-build', 'pending']
-            });
+              });

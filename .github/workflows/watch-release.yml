@@ -5,17 +5,26 @@ on:
     - cron: '0 */6 * * *'   # каждые 6 часов
   workflow_dispatch:
 
+# Нужные права для создания issues и триггера workflow
+permissions:
+  contents: read
+  issues: write
+  workflows: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
-      new_version: ${{ steps.check.outputs.new_version }}
-      should_build: ${{ steps.check.outputs.should_build }}
+      new_version: ${{ steps.check_release.outputs.new_version }}
+      should_build: ${{ steps.check_release.outputs.should_build }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Check latest OpenCode release
-        id: check
+        id: check_release
         run: |
           # Получаем latest release через GitHub API
           LATEST=$(curl -sL \
@@ -34,6 +43,8 @@ jobs:
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "🚀 New version detected: $LATEST (was $CURRENT)"
           else
+            # Явно задаём пустую new_version, чтобы выход всегда был определён
+            echo "new_version=" >> $GITHUB_OUTPUT
             echo "should_build=false" >> $GITHUB_OUTPUT
             echo "😴 No new version. Current: $CURRENT"
           fi
@@ -46,20 +57,20 @@ jobs:
       - name: Trigger build workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Build OpenCode for Termux
+          token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: 'Build OpenCode for Termux'
           ref: main
-          inputs: |
-            { "version": "${{ needs.check.outputs.new_version }}" }
+          inputs: '{"version":"${{ needs.check.outputs.new_version }}"}'
 
       - name: Create tracking issue
         uses: actions/github-script@v7
         with:
           script: |
             const ver = '${{ needs.check.outputs.new_version }}';
-            github.rest.issues.create({
+            await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `🔔 Auto-build triggered for OpenCode v${ver}`,
               body: `New OpenCode release **v${ver}** detected.\n\n- Build workflow triggered automatically.\n- If patches fail, this issue will be updated.\n- Assignee: @${context.repo.owner}`,
               labels: ['auto-build', 'pending']
-           });
+            });

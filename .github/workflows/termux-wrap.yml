@@ -22,10 +22,14 @@ jobs:
 
       - name: Determine version
         id: ver
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
         run: |
-          VER="${{ github.event.inputs.version }}"
+          set -euo pipefail
+          VER="${INPUT_VERSION:-}"
           if [[ -z "$VER" ]]; then
-            VER="${{ github.event.client_payload.version }}"
+            VER="${PAYLOAD_VERSION:-}"
           fi
           if [[ -z "$VER" ]]; then
             # Fallback: read first VERSION= line from package-deb.sh
@@ -33,6 +37,11 @@ jobs:
           fi
           if [[ -z "$VER" ]]; then
             echo "::error::Could not determine version"
+            exit 1
+          fi
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid OpenCode version: $VER"
+            echo "::error::Expected semantic version like 1.18.10"
             exit 1
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
@@ -57,8 +66,11 @@ jobs:
           bun-version: latest
 
       - name: Bump versions and apply patches
+        env:
+          OPENCODE_VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          bash scripts/auto-patch.sh ./opencode ${{ steps.ver.outputs.version }}
+          set -euo pipefail
+          bash scripts/auto-patch.sh ./opencode "$OPENCODE_VERSION"
 
       - name: Build OpenCode
         run: |
@@ -79,11 +91,19 @@ jobs:
       - name: Wrap binary
         run: |
           cd bun-termux-loader
-          python3 build.py             ../opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode             ../opencode-termux
+          python3 build.py \
+            ../opencode/packages/opencode/dist/opencode-linux-arm64/bin/opencode \
+            ../opencode-termux
 
       - name: Build .deb
+        env:
+          OPENCODE_VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          bash scripts/package-deb.sh             --binary opencode-termux             --output opencode-termux.deb             --version ${{ steps.ver.outputs.version }}
+          set -euo pipefail
+          bash scripts/package-deb.sh \
+            --binary opencode-termux \
+            --output opencode-termux.deb \
+            --version "$OPENCODE_VERSION"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

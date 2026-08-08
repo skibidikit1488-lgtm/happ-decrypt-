@@ -8,6 +8,12 @@ if [[ -z "$NEW_VERSION" ]]; then
     exit 1
 fi
 
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Invalid version: $NEW_VERSION"
+    echo "Expected semantic version like 1.18.10"
+    exit 1
+fi
+
 echo "[bump] Updating version references to $NEW_VERSION..."
 
 # 1. Patch file: 0001-android-support.patch

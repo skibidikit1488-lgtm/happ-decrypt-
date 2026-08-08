@@ -3,14 +3,26 @@ set -euo pipefail
 
 OPENCODE_DIR="${1:-./opencode}"
 TARGET_VERSION="${2:-}"
-PATCH_DIR="${2:-./patches}"
+PATCH_DIR="${3:-./patches}"
 
 if [[ -z "$TARGET_VERSION" ]]; then
-    echo "Usage: $0 <opencode-dir> <version>"
+    echo "Usage: $0 <opencode-dir> <version> [patch-dir]"
+    exit 1
+fi
+
+if [[ ! "$TARGET_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Invalid OpenCode version: $TARGET_VERSION"
+    echo "Expected semantic version like 1.18.10"
+    exit 1
+fi
+
+if [[ ! -d "$PATCH_DIR" ]]; then
+    echo "Patch directory does not exist: $PATCH_DIR"
     exit 1
 fi
 
 echo "[auto-patch] Target: OpenCode v$TARGET_VERSION"
+echo "[auto-patch] Patch dir: $PATCH_DIR"
 
 # 1. Bump versions in our repo first
 bash scripts/bump-version.sh "$TARGET_VERSION"

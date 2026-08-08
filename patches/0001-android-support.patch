@@ -1,11 +1,9 @@
 --- a/packages/opencode/package.json
 +++ b/packages/opencode/package.json
-@@ -3,7 +3,7 @@
-   "version": "1.18.8",
+@@ -4,6 +4,7 @@
    "name": "opencode",
--  "os": ["darwin", "linux", "win32"],
+   "type": "module",
+   "license": "MIT",
 +  "os": ["darwin", "linux", "win32", "android"],
-   "cpu": ["arm64", "x64"],
-   "bin": {
-     "opencode": "./bin/opencode"
-     
+   "private": true,
+   "scripts": {
